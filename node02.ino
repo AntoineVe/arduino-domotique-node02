@@ -3,7 +3,7 @@ int SONDE_TEMP0 = A0;
 int temp_c = 0;
 float temp_cm = 0.00;
 
-// Conso chauffage
+// Conso cuisinei
 int AMP_CUIS_SIG = A1;
 
 // Relais
@@ -23,26 +23,47 @@ boolean reading = false;
 #define BUFSIZ 100
 
 // Calcul de la consommation avec les ACS712 (5A ou 20A)
-float GetCurrent(int pin, int amp) {
-  int reading = 0;
-  int reading_max = 0;
-  float CurrentSensor = 0.000;
-  for(int i = 0; i < 2500; i++) {
-    reading = analogRead(pin);
-    if (reading >= reading_max) {
-      reading_max = reading;
+int determineVQ(int PIN) {
+  Serial.print("estimating avg. quiscent voltage:");
+  long VQ = 0;
+  //read 5000 samples to stabilise value
+  for (int i=0; i<5000; i++) {
+    VQ += analogRead(PIN);
+    delay(1);//depends on sampling (on filter capacitor), can be 1/80000 (80kHz) max.
+  }
+  VQ /= 5000;
+  Serial.print(map(VQ, 0, 1023, 0, 5000));
+  Serial.println(" mV");
+  return int(VQ);
+}
+
+int adc_zero = determineVQ(AMP_CUIS_SIG);  //autoadjusted relative digital zero
+const unsigned long sampleTime = 100000;   // sample over 100ms, it is an exact number of cycles for both 50Hz and 60Hz mains
+const unsigned long numSamples = 500;      // choose the number of samples to divide sampleTime exactly, but low enough for the ADC to keep up
+const unsigned long sampleInterval = sampleTime/numSamples;  // the sampling interval, must be longer than then ADC conversion time
+float readCurrent(int PIN, int AMP) {
+  float COEF;
+  unsigned long currentAcc = 0;
+  unsigned int count = 0;
+  unsigned long prevMicros = micros() - sampleInterval;
+  while (count < numSamples)
+  {
+    if (micros() - prevMicros >= sampleInterval)
+    {
+      int adc_raw = analogRead(PIN) - adc_zero;
+      currentAcc += (unsigned long)(adc_raw * adc_raw);
+      ++count;
+      prevMicros += sampleInterval;
     }
-    delay(1);
   }
-  float OutputSensorVoltage = (reading_max*5.00)/1023.00;
-  if(amp == 20) {
-    CurrentSensor = (OutputSensorVoltage - 2.500)/0.100;
-  } 
-  else {
-    CurrentSensor = (OutputSensorVoltage - 2.500)/0.185;
+  if (AMP == 20) {
+    COEF = 50.00;
   }
-  int Watts = round(CurrentSensor * 230);
-  return Watts;
+  else if (AMP == 5) {
+    COEF = 27.027;
+  }
+  float rms = sqrt((float)currentAcc/(float)numSamples) * (COEF / 1024.00);
+  return rms;
 }
 
 int TMP36(int capteur) {
@@ -64,11 +85,14 @@ int TMP36(int capteur) {
 void setup() {
   Serial.begin(9600);
   pinMode(SONDE_TEMP0, INPUT);
-  pinMode(RELAIS_CH1, INPUT);
-  pinMode(RELAIS_CH2, INPUT);
-  pinMode(RELAIS_CH3, INPUT);
-  pinMode(RELAIS_CH4, INPUT);
+  pinMode(RELAIS_CH1, OUTPUT);
+  pinMode(RELAIS_CH2, OUTPUT);
+  pinMode(RELAIS_CH3, OUTPUT);
+  pinMode(RELAIS_CH4, OUTPUT);
   pinMode(AMP_CUIS_SIG, INPUT);
+//  adc_zero = determineVQ(AMP_CUIS_SIG);
+  Ethernet.begin(mac, ip);
+  server.begin();
 }
 
 void loop() {
@@ -136,7 +160,7 @@ void loop() {
           client.println("\t<sensor>");
           client.println("\t\t<name>Watts</name>");
           client.print("\t\t<value>");
-          client.print(GetCurrent(AMP_CUIS_SIG, 20));
+          client.print(readCurrent(AMP_CUIS_SIG, 20));
           client.println("</value>");
           client.println("\t\t<type>ACS712-20</type>");
           client.println("\t</sensor>");
@@ -160,5 +184,6 @@ void loop() {
   }
 
 }
+
 
 
