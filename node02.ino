@@ -64,19 +64,15 @@ float readCurrent(int PIN, int AMP) {
 }
 
 int TMP36(int capteur) {
-  int temperature = 0;
+  unsigned long temperature_raw = 0;
+  int sample = 250;
   float temperature_moy = 0.00;
-  for(int i = 0; i < 200; i++) {
-    temperature = round((((((analogRead(capteur)) * 5.00) / 1024.00) * 1000) - 500) / 10.00);
-    if (temperature != 0 && temperature_moy != 0) {
-      temperature_moy = (temperature + temperature_moy) / 2.00;
-    }
-    if (temperature_moy == 0) {
-      temperature_moy = temperature;
-    }
+  for(int i = 0; i < sample; i++) {
+    temperature_moy += temperature_raw;
     delay(5);
   }
-  return round(temperature);
+  float temperature = (((((temperature_moy / sample) * 5.00) / 1024.00) * 1000.00) - 500.00) / 10.00;
+  return temperature;
 }
 
 void setup() {
@@ -125,7 +121,6 @@ void loop() {
             Serial.println("HIGH");
           }
         }
-
         if (c == '\n' && currentLineIsBlank) {
           client.println("HTTP/1.1 200 OK");
           client.println("Content-Type: text/xml");
@@ -164,8 +159,5 @@ void loop() {
     delay(5);
     client.stop();
   }
-
 }
-
-
 
