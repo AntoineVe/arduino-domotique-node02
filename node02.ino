@@ -23,8 +23,8 @@ boolean reading = false;
 #define BUFSIZ 100
 
 // Calcul de la consommation avec les ACS712 (5A ou 20A)
+// Thanks to http://forum.arduino.cc/index.php?topic=179541.0
 int determineVQ(int PIN) {
-  Serial.print("estimating avg. quiscent voltage:");
   long VQ = 0;
   //read 5000 samples to stabilise value
   for (int i=0; i<5000; i++) {
@@ -32,12 +32,11 @@ int determineVQ(int PIN) {
     delay(1);//depends on sampling (on filter capacitor), can be 1/80000 (80kHz) max.
   }
   VQ /= 5000;
-  Serial.print(map(VQ, 0, 1023, 0, 5000));
-  Serial.println(" mV");
   return int(VQ);
 }
 
 int adc_zero = determineVQ(AMP_CUIS_SIG);  //autoadjusted relative digital zero
+
 const unsigned long sampleTime = 100000;   // sample over 100ms, it is an exact number of cycles for both 50Hz and 60Hz mains
 const unsigned long numSamples = 500;      // choose the number of samples to divide sampleTime exactly, but low enough for the ADC to keep up
 const unsigned long sampleInterval = sampleTime/numSamples;  // the sampling interval, must be longer than then ADC conversion time
@@ -46,10 +45,8 @@ float readCurrent(int PIN, int AMP) {
   unsigned long currentAcc = 0;
   unsigned int count = 0;
   unsigned long prevMicros = micros() - sampleInterval;
-  while (count < numSamples)
-  {
-    if (micros() - prevMicros >= sampleInterval)
-    {
+  while (count < numSamples) {
+    if (micros() - prevMicros >= sampleInterval) {
       int adc_raw = analogRead(PIN) - adc_zero;
       currentAcc += (unsigned long)(adc_raw * adc_raw);
       ++count;
@@ -57,10 +54,10 @@ float readCurrent(int PIN, int AMP) {
     }
   }
   if (AMP == 20) {
-    COEF = 50.00;
+    COEF = 50.000;
   }
   else if (AMP == 5) {
-    COEF = 27.027;
+    COEF = 27.0273;
   }
   float rms = sqrt((float)currentAcc/(float)numSamples) * (COEF / 1024.00);
   return rms;
@@ -90,7 +87,7 @@ void setup() {
   pinMode(RELAIS_CH3, OUTPUT);
   pinMode(RELAIS_CH4, OUTPUT);
   pinMode(AMP_CUIS_SIG, INPUT);
-//  adc_zero = determineVQ(AMP_CUIS_SIG);
+  adc_zero = determineVQ(AMP_CUIS_SIG);
   Ethernet.begin(mac, ip);
   server.begin();
 }
@@ -98,34 +95,23 @@ void setup() {
 void loop() {
   char clientline[BUFSIZ];
   int index = 0;
-  // listen for incoming clients
   EthernetClient client = server.available();
   if (client) {
-    // an http request ends with a blank line
     boolean currentLineIsBlank = true;
     while (client.connected()) {
       if (client.available()) {
         char c = client.read();
-        // if you've gotten to the end of the line (received a newline
-        // character) and the line is blank, the http request has ended,
-        // so you can send a reply
         if (c != '\n' && c != '\r') {
           clientline[index] = c;
           index++;
-          // are we too big for the buffer? start tossing out data
           if (index >= BUFSIZ)
             index = BUFSIZ -1;
-          // continue to read more data!
           continue;
         }
-        // got a \n or \r new line, which means the string is done
         clientline[index] = 0;
         if (strstr(clientline, "GET /") != 0) {
-          // this time no space after the /, so a sub-file!
           char *command;
-          command = clientline + 5; // look after the "GET /" (5 chars)
-          // a little trick, look for the " HTTP/1.1" string and
-          // turn the first character of the substring into a 0 to clear it out.
+          command = clientline + 5; 
           (strstr(clientline, " HTTP"))[0] = 0;    
           String comm = String(command[0]);
           comm += String(command[1]);
@@ -141,12 +127,11 @@ void loop() {
         }
 
         if (c == '\n' && currentLineIsBlank) {
-          ;
-          // send a standard http response header
           client.println("HTTP/1.1 200 OK");
           client.println("Content-Type: text/xml");
           client.println();
           client.println("<?xml version=\"1.0\"?>");
+          client.println("<root>");
           // Cuisine
           client.println("<node>");
           client.println("\t<name>Cuisine</name>");
@@ -165,21 +150,18 @@ void loop() {
           client.println("\t\t<type>ACS712-20</type>");
           client.println("\t</sensor>");
           client.println("</node>");
+          client.println("</root>");
           break;
         }
         if (c == '\n') {
-          // you're starting a new line
           currentLineIsBlank = true;
         } 
         else if (c != '\r') {
-          // you've gotten a character on the current line
           currentLineIsBlank = false;
         }
       }
     }
-    // give the web browser time to receive the data
-    delay(1);
-    // close the connection:
+    delay(5);
     client.stop();
   }
 
