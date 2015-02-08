@@ -22,52 +22,42 @@ EthernetServer server(80);
 boolean reading = false;
 #define BUFSIZ 100
 
-// Calcul de la consommation avec les ACS712 (5A ou 20A)
-// Thanks to http://forum.arduino.cc/index.php?topic=179541.0
-int determineVQ(int PIN) {
-  long VQ = 0;
-  //read 5000 samples to stabilise value
-  for (int i=0; i<5000; i++) {
-    VQ += analogRead(PIN);
-    delay(1);//depends on sampling (on filter capacitor), can be 1/80000 (80kHz) max.
+int ACS712(int pin, int amp) {
+  int mVperAmp;
+  // Cf datasheet pour mVperAmp
+  if (amp == 20) {
+    mVperAmp = 100;
+  } else if (amp == 5) {
+    mVperAmp = 185;
   }
-  VQ /= 5000;
-  return int(VQ);
-}
-
-int adc_zero = determineVQ(AMP_CUIS_SIG);  //autoadjusted relative digital zero
-
-const unsigned long sampleTime = 100000;   // sample over 100ms, it is an exact number of cycles for both 50Hz and 60Hz mains
-const unsigned long numSamples = 500;      // choose the number of samples to divide sampleTime exactly, but low enough for the ADC to keep up
-const unsigned long sampleInterval = sampleTime/numSamples;  // the sampling interval, must be longer than then ADC conversion time
-float readCurrent(int PIN, int AMP) {
-  float COEF;
-  unsigned long currentAcc = 0;
-  unsigned int count = 0;
-  unsigned long prevMicros = micros() - sampleInterval;
-  while (count < numSamples) {
-    if (micros() - prevMicros >= sampleInterval) {
-      int adc_raw = analogRead(PIN) - adc_zero;
-      currentAcc += (unsigned long)(adc_raw * adc_raw);
-      ++count;
-      prevMicros += sampleInterval;
+  // Recherche les pics // et calcul de l'offset
+  long offset = 0;
+  int reading = 0;
+  int reading_max = 0;
+  for(int i = 0; i < 5000; i++) {
+    reading = analogRead(pin);
+    offset += reading;
+    if (reading >= reading_max) {
+      reading_max = reading;
     }
+    delay(1);
   }
-  if (AMP == 20) {
-    COEF = 50.000;
-  }
-  else if (AMP == 5) {
-    COEF = 27.0273;
-  }
-  float rms = sqrt((float)currentAcc/(float)numSamples) * (COEF / 1024.00);
-  return rms;
+  offset /= 1024;
+  // Calcul de la puissance (P=UI)
+  // courant alternatif donc utilise la crete
+  float max_sensor = (reading_max / 1024.00) * 5000;
+  float amps = (max_sensor - offset) / mVperAmp;
+  // etrangement, il y a un surplus moyen mesure de 0.365 A
+  int watts = round((amps - 0.365) * 230.000);
+  return watts;
 }
 
-int TMP36(int capteur) {
+float TMP36(int capteur) {
   unsigned long temperature_raw = 0;
   int sample = 250;
   float temperature_moy = 0.00;
   for(int i = 0; i < sample; i++) {
+    temperature_raw = analogRead(capteur);
     temperature_moy += temperature_raw;
     delay(5);
   }
@@ -83,7 +73,6 @@ void setup() {
   pinMode(RELAIS_CH3, OUTPUT);
   pinMode(RELAIS_CH4, OUTPUT);
   pinMode(AMP_CUIS_SIG, INPUT);
-  adc_zero = determineVQ(AMP_CUIS_SIG);
   Ethernet.begin(mac, ip);
   server.begin();
 }
@@ -140,7 +129,7 @@ void loop() {
           client.println("\t<sensor>");
           client.println("\t\t<name>Watts</name>");
           client.print("\t\t<value>");
-          client.print(readCurrent(AMP_CUIS_SIG, 20));
+          client.print(ACS712(AMP_CUIS_SIG, 20));
           client.println("</value>");
           client.println("\t\t<type>ACS712-20</type>");
           client.println("\t</sensor>");
@@ -159,5 +148,6 @@ void loop() {
     delay(5);
     client.stop();
   }
+  delay(250);
 }
 
